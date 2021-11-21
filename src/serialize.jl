@@ -25,7 +25,7 @@ total for `a, b <: typeof(x)`. Satisfies
 and `x === deserialize(T, order, serialize(order, x::T))`
 
 NOTE: scalar serialize fails on NaN edge cases. This is handled in vector serialize.
-Consequently `Serialize(Float64) === nothing`.
+Consequently `Serialize(Float64) === nothing`. TODO
 
 See also: [`serializable`](@ref) [`deserialize`](@ref)
 """
@@ -52,28 +52,24 @@ deserialize(::Type{T}, ::ForwardOrdering, u::Unsigned) where T <: Signed = xor(s
 Serializable(::ForwardOrdering, T::Type{<:Union{Unsigned, Signed}}) = isbitstype(T) ? Some(unsigned(T)) : nothing
 
 # Floats are not Serializable under regular orderings because they fail on NaN edge cases.
-for (float, int) in ((Float16, Int16), (Float32, Int32), (Float64, Int64))
-    @eval function serialize(::Base.Sort.Float.Right, x::$float)
-        y = reinterpret($int, x)
-        unsigned(y < 0 ? ~y : xor(y, typemin(y))) - ~reinterpret(unsigned($int), $float(-Inf))
-    end
-    @eval function deserialize(T::Type{$float}, ::Base.Sort.Float.Right, u::unsigned($int))
-        y = reinterpret($int, u + ~reinterpret(unsigned($int), $float(-Inf)))
-        reinterpret(T, y < 0 ? xor(y, typemin(y)) : ~y)
-    end
-    @eval Serializable(::Base.Sort.Float.Right, ::Type{$float}) = unsigned($int)
+# If the ordering guarantees that there are no NaNs, then they work.
+struct NaNFreeForwardOrdering2 <: Ordering end
+nan_free(::ForwardOrdering) = NaNFreeForwardOrdering2()
+nan_free(r::ReverseOrdering) = ReverseOrdering(nan_free(r.fwd))
+nan_free_unwrap(o::Ordering) = o
+nan_free_unwrap(::NaNFreeForwardOrdering2) = Forward
+nan_free_unwrap(r::ReverseOrdering) = ReverseOrdering(nan_free_unwrap(r.fwd))
 
-    #This repetitive code is necessary because we have Base.Sort.Float.Left rather than
-    #Base.Order.ReverseOrdering{Base.Sort.Float.Right}.
-    @eval function serialize(::Base.Sort.Float.Left, x::$float)
+for (float, int) in ((Float16, Int16), (Float32, Int32), (Float64, Int64))
+    @eval function serialize(::NaNFreeForwardOrdering2, x::$float)
         y = reinterpret($int, x)
         unsigned(y < 0 ? ~y : xor(y, typemin(y))) - ~reinterpret(unsigned($int), $float(-Inf))
     end
-    @eval function deserialize(T::Type{$float}, ::Base.Sort.Float.Left, u::unsigned($int))
+    @eval function deserialize(T::Type{$float}, ::NaNFreeForwardOrdering2, u::unsigned($int))
         y = reinterpret($int, u + ~reinterpret(unsigned($int), $float(-Inf)))
         reinterpret(T, y < 0 ? xor(y, typemin(y)) : ~y)
     end
-    @eval Serializable(::Base.Sort.Float.Left, ::Type{$float}) = unsigned($int)
+    @eval Serializable(::NaNFreeForwardOrdering2, ::Type{$float}) = unsigned($int)
 end
 
 # Booleans
